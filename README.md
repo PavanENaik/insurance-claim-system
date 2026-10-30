@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Insurance Claim Document Verification & Settlement Tracking System
 
-## Getting Started
+## Project Overview
 
-First, run the development server:
+A web-based application for managing insurance claims, verifying claim documents and tracking claim settlements.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Technologies Used
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Frontend: Next.js
+- Backend: Next.js API Routes
+- Database: MySQL
+- NoSQL Database: MongoDB
+- Language: TypeScript
+- Authentication: bcrypt and JWT
+- Version Control: Git and GitHub
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Main Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- User authentication
+- Claim submission and tracking
+- Claim approval and rejection
+- Document verification
+- Document verification history
+- Dashboard statistics
+- Settlement tracking
 
-## Learn More
+## Project Structure
 
-To learn more about Next.js, take a look at the following resources:
+The application uses Next.js App Router with API routes, frontend pages and database connection utilities.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Team Contributions
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Member 1 – Pavan E. Naik
 
-## Deploy on Vercel
+Implemented the project setup, database connections, claims functionality, document verification, dashboard, settlement tracking and basic authentication.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+See `MEMBER1_CONTRIBUTION.md` for details.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Member 2 - Pavankumar H
+
+To complete the remaining work, including role-based access control, customer-specific access, additional security, integration testing and final documentation.
+
+## Setup Instructions
+
+1. Clone the repository.
+2. Run `npm install`.
+3. Configure the required environment variables in `.env.local`.
+4. Set up the MySQL database and MongoDB.
+5. Run the development server using `npm run dev`.
+
+## Project Status
+
+Core application modules and basic authentication have been implemented. Additional access control, security improvements, integration testing and final documentation remain.
