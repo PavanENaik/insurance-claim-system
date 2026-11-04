@@ -1,9 +1,53 @@
 
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import pool from "@/lib/db";
 import clientPromise from "@/lib/mongodb";
+import { verifyAuthToken } from "@/lib/auth";
+
+async function checkReviewerAccess() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("auth_token")?.value;
+
+  if (!token) {
+    return {
+      authorized: false,
+      status: 401,
+      message: "Please log in first.",
+    };
+  }
+
+  try {
+    const user = await verifyAuthToken(token);
+
+    if (!["ADMIN", "CLAIM_OFFICER"].includes(user.role)) {
+      return {
+        authorized: false,
+        status: 403,
+        message: "You are not authorized to access document verification.",
+      };
+    }
+
+    return { authorized: true, status: 200, message: "" };
+  } catch {
+    return {
+      authorized: false,
+      status: 401,
+      message: "Invalid or expired session. Please log in again.",
+    };
+  }
+}
 
 export async function GET() {
+  const access = await checkReviewerAccess();
+
+  if (!access.authorized) {
+    return NextResponse.json(
+      { success: false, message: access.message },
+      { status: access.status }
+    );
+  }
+
   try {
     const [rows] = await pool.query(`
       SELECT
@@ -47,6 +91,15 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const access = await checkReviewerAccess();
+
+  if (!access.authorized) {
+    return NextResponse.json(
+      { success: false, message: access.message },
+      { status: access.status }
+    );
+  }
+
   let connection;
 
   try {

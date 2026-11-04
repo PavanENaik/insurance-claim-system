@@ -1,21 +1,62 @@
 
-import { NextResponse } from "next/server";
+import { NextResponse, connection } from "next/server";
+import { cookies } from "next/headers";
 import pool from "@/lib/db";
+import { verifyAuthToken } from "@/lib/auth";
+
+async function getCurrentUser() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("auth_token")?.value;
+
+  if (!token) return null;
+
+  try {
+    return await verifyAuthToken(token);
+  } catch {
+    return null;
+  }
+}
 
 export async function GET() {
+  await connection();
+
   try {
-    const [rows] = await pool.query(
-      `SELECT
-        settlement_id,
-        claim_id,
-        approved_amount,
-        settlement_date,
-        payment_method,
-        payment_status,
-        transaction_reference
-      FROM settlements
-      ORDER BY created_at DESC`
-    );
+    const user = await getCurrentUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: "Please log in first." },
+        { status: 401 }
+      );
+    }
+
+    let query = `
+      SELECT
+        s.settlement_id,
+        s.claim_id,
+        s.approved_amount,
+        s.settlement_date,
+        s.payment_method,
+        s.payment_status,
+        s.transaction_reference
+      FROM settlements s
+    `;
+
+    const params: number[] = [];
+
+    if (user.role === "CUSTOMER") {
+      query += `
+        INNER JOIN claims c ON s.claim_id = c.claim_id
+        INNER JOIN insurance_policies p ON c.policy_id = p.policy_id
+        INNER JOIN customers cu ON p.customer_id = cu.customer_id
+        WHERE cu.user_id = ?
+      `;
+      params.push(user.userId);
+    }
+
+    query += " ORDER BY s.created_at DESC";
+
+    const [rows] = await pool.execute(query, params);
 
     return NextResponse.json({
       success: true,
@@ -32,7 +73,28 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  await connection();
+
   try {
+    const user = await getCurrentUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: "Please log in first." },
+        { status: 401 }
+      );
+    }
+
+    if (!["ADMIN", "CLAIM_OFFICER"].includes(user.role)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "You are not authorized to update settlements.",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { settlement_id, payment_status } = body;
 
