@@ -1,8 +1,10 @@
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import pool from "@/lib/db";
 import { verifyAuthToken } from "@/lib/auth";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 async function getCurrentUser() {
   const cookieStore = await cookies();
@@ -17,49 +19,47 @@ async function getCurrentUser() {
   }
 }
 
+// GET: Fetch claims
 export async function GET() {
+  await connection();
+
   try {
     const user = await getCurrentUser();
 
     if (!user) {
       return NextResponse.json(
-        { success: false, message: "Please log in first." },
+        { success: false, message: "Please log in." },
         { status: 401 }
       );
     }
 
-    let query = `
-      SELECT
-        c.claim_id,
-        c.claim_number,
-        c.claim_amount,
-        c.claim_status,
-        c.claim_date
-      FROM claims c
-    `;
-
-    const params: number[] = [];
+    let rows: RowDataPacket[];
 
     if (user.role === "CUSTOMER") {
-      query += `
-        INNER JOIN insurance_policies p ON c.policy_id = p.policy_id
-        INNER JOIN customers cu ON p.customer_id = cu.customer_id
-        WHERE cu.user_id = ?
-      `;
-      params.push(user.userId);
+      const [result] = await pool.execute<RowDataPacket[]>(
+        `SELECT c.claim_id, c.claim_number, c.claim_amount,
+                c.claim_status, c.claim_date
+         FROM claims c
+         JOIN insurance_policies p ON c.policy_id = p.policy_id
+         JOIN customers cu ON p.customer_id = cu.customer_id
+         WHERE cu.user_id = ?
+         ORDER BY c.claim_date DESC`,
+        [user.userId]
+      );
+      rows = result;
+    } else {
+      const [result] = await pool.execute<RowDataPacket[]>(
+        `SELECT claim_id, claim_number, claim_amount,
+                claim_status, claim_date
+         FROM claims
+         ORDER BY claim_date DESC`
+      );
+      rows = result;
     }
 
-    query += " ORDER BY c.claim_date DESC";
-
-    const [rows] = await pool.execute(query, params);
-
-    return NextResponse.json({
-      success: true,
-      claims: rows,
-    });
+    return NextResponse.json({ success: true, claims: rows });
   } catch (error) {
-    console.error("Failed to fetch claims:", error);
-
+    console.error("GET claims error:", error);
     return NextResponse.json(
       { success: false, message: "Unable to fetch claims." },
       { status: 500 }
@@ -67,13 +67,16 @@ export async function GET() {
   }
 }
 
+// POST: Submit a new claim
 export async function POST(request: Request) {
+  await connection();
+
   try {
     const user = await getCurrentUser();
 
     if (!user) {
       return NextResponse.json(
-        { success: false, message: "Please log in first." },
+        { success: false, message: "Please log in." },
         { status: 401 }
       );
     }
@@ -97,65 +100,51 @@ export async function POST(request: Request) {
     } = body;
 
     if (
-      !Number.isInteger(policy_id) ||
-      policy_id <= 0 ||
+      !Number.isInteger(Number(policy_id)) ||
+      Number(policy_id) <= 0 ||
       typeof claim_number !== "string" ||
       !claim_number.trim() ||
-      claim_number.length > 50 ||
       typeof incident_date !== "string" ||
+      !incident_date ||
       typeof claim_date !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(incident_date) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(claim_date) ||
-      !Number.isFinite(claim_amount) ||
-      claim_amount <= 0 ||
+      !claim_date ||
+      !Number.isFinite(Number(claim_amount)) ||
+      Number(claim_amount) <= 0 ||
       typeof claim_description !== "string" ||
       !claim_description.trim()
     ) {
       return NextResponse.json(
-        { success: false, message: "Please enter valid claim details." },
+        { success: false, message: "Please enter all valid claim details." },
         { status: 400 }
       );
     }
 
-    if (claim_date < incident_date) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Claim date cannot be before the incident date.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const [policyRows] = await pool.execute(
+    const [policies] = await pool.execute<RowDataPacket[]>(
       `SELECT p.policy_id
        FROM insurance_policies p
-       INNER JOIN customers cu ON p.customer_id = cu.customer_id
+       JOIN customers cu ON p.customer_id = cu.customer_id
        WHERE p.policy_id = ? AND cu.user_id = ?`,
-      [policy_id, user.userId]
+      [Number(policy_id), user.userId]
     );
 
-    if ((policyRows as unknown[]).length === 0) {
+    if (policies.length === 0) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "This policy does not belong to your account.",
-        },
+        { success: false, message: "This policy does not belong to your account." },
         { status: 403 }
       );
     }
 
-    const [result] = await pool.execute(
+    const [result] = await pool.execute<ResultSetHeader>(
       `INSERT INTO claims
-        (policy_id, claim_number, incident_date, claim_date,
-         claim_amount, claim_description, claim_status)
+       (policy_id, claim_number, incident_date, claim_date,
+        claim_amount, claim_description, claim_status)
        VALUES (?, ?, ?, ?, ?, ?, 'SUBMITTED')`,
       [
-        policy_id,
+        Number(policy_id),
         claim_number.trim(),
         incident_date,
         claim_date,
-        claim_amount,
+        Number(claim_amount),
         claim_description.trim(),
       ]
     );
@@ -163,36 +152,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: true,
-        message: "Claim submitted successfully!",
-        claim_id: (result as { insertId: number }).insertId,
+        message: "Claim submitted successfully.",
+        claim_id: result.insertId,
       },
       { status: 201 }
     );
-  } catch (error: unknown) {
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? (error as { code: string }).code
-        : "";
-
-    if (code === "ER_DUP_ENTRY") {
-      return NextResponse.json(
-        { success: false, message: "This claim number already exists." },
-        { status: 409 }
-      );
-    }
-
-    if (
-      code === "ER_NO_REFERENCED_ROW_2" ||
-      code === "ER_NO_REFERENCED_ROW"
-    ) {
-      return NextResponse.json(
-        { success: false, message: "The policy ID does not exist." },
-        { status: 400 }
-      );
-    }
-
-    console.error("Failed to submit claim:", error);
-
+  } catch (error) {
+    console.error("POST claims error:", error);
     return NextResponse.json(
       { success: false, message: "Unable to submit the claim." },
       { status: 500 }
@@ -200,25 +166,25 @@ export async function POST(request: Request) {
   }
 }
 
+// PATCH: Approve or reject a claim
 export async function PATCH(request: Request) {
-  let connection;
+  await connection();
+
+  let dbConnection;
 
   try {
     const user = await getCurrentUser();
 
     if (!user) {
       return NextResponse.json(
-        { success: false, message: "Please log in first." },
+        { success: false, message: "Please log in." },
         { status: 401 }
       );
     }
 
     if (!["ADMIN", "CLAIM_OFFICER"].includes(user.role)) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "You are not authorized to review claims.",
-        },
+        { success: false, message: "You are not allowed to review claims." },
         { status: 403 }
       );
     }
@@ -227,109 +193,66 @@ export async function PATCH(request: Request) {
     const { claim_id, claim_status, remarks } = body;
 
     if (
-      !Number.isInteger(claim_id) ||
-      claim_id <= 0 ||
-      !["APPROVED", "REJECTED"].includes(claim_status) ||
-      typeof remarks !== "string" ||
-      !remarks.trim() ||
-      remarks.length > 1000
+      !Number.isInteger(Number(claim_id)) ||
+      Number(claim_id) <= 0 ||
+      !["APPROVED", "REJECTED"].includes(claim_status)
     ) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Enter a valid claim ID, decision, and remarks.",
-        },
+        { success: false, message: "Invalid claim review details." },
         { status: 400 }
       );
     }
 
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
+    dbConnection = await pool.getConnection();
+    await dbConnection.beginTransaction();
 
-    const [claimRows] = await connection.execute(
-      `SELECT claim_id, claim_status
-       FROM claims
-       WHERE claim_id = ?
-       FOR UPDATE`,
-      [claim_id]
+    const [claims] = await dbConnection.execute<RowDataPacket[]>(
+      "SELECT claim_id FROM claims WHERE claim_id = ? FOR UPDATE",
+      [Number(claim_id)]
     );
 
-    const claims = claimRows as {
-      claim_id: number;
-      claim_status: string;
-    }[];
-
     if (claims.length === 0) {
-      await connection.rollback();
-
+      await dbConnection.rollback();
       return NextResponse.json(
         { success: false, message: "Claim not found." },
         { status: 404 }
       );
     }
 
-    if (
-      !["SUBMITTED", "UNDER_REVIEW"].includes(claims[0].claim_status)
-    ) {
-      await connection.rollback();
-
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Only submitted or under-review claims can be reviewed.",
-        },
-        { status: 409 }
-      );
-    }
-
-    await connection.execute(
+    await dbConnection.execute(
       `INSERT INTO claim_reviews
-        (claim_id, reviewer_id, review_decision, remarks, reviewed_at)
+       (claim_id, reviewer_id, review_decision, remarks, reviewed_at)
        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [claim_id, user.userId, claim_status, remarks.trim()]
+      [
+        Number(claim_id),
+        user.userId,
+        claim_status,
+        typeof remarks === "string" ? remarks.trim() : "",
+      ]
     );
 
-    await connection.execute(
-      `UPDATE claims SET claim_status = ? WHERE claim_id = ?`,
-      [claim_status, claim_id]
+    await dbConnection.execute(
+      "UPDATE claims SET claim_status = ? WHERE claim_id = ?",
+      [claim_status, Number(claim_id)]
     );
 
-    await connection.commit();
+    await dbConnection.commit();
 
     return NextResponse.json({
       success: true,
       message: `Claim ${claim_status.toLowerCase()} successfully.`,
     });
-  } catch (error: unknown) {
-    if (connection) {
-      await connection.rollback().catch(() => undefined);
+  } catch (error) {
+    if (dbConnection) {
+      await dbConnection.rollback();
     }
 
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? (error as { code: string }).code
-        : "";
-
-    if (
-      code === "ER_NO_REFERENCED_ROW_2" ||
-      code === "ER_NO_REFERENCED_ROW"
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "The claim or reviewer account does not exist.",
-        },
-        { status: 400 }
-      );
-    }
-
-    console.error("Failed to review claim:", error);
-
+    console.error("PATCH claims error:", error);
     return NextResponse.json(
       { success: false, message: "Unable to review the claim." },
       { status: 500 }
     );
   } finally {
-    connection?.release();
+    dbConnection?.release();
   }
 }

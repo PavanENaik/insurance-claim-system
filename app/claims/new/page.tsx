@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, type FormEvent } from "react";
@@ -10,6 +9,8 @@ export default function NewClaimPage() {
   const [claimDate, setClaimDate] = useState("");
   const [claimAmount, setClaimAmount] = useState("");
   const [description, setDescription] = useState("");
+  const [documentType, setDocumentType] = useState("Supporting Document");
+  const [files, setFiles] = useState<File[]>([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -39,13 +40,60 @@ export default function NewClaimPage() {
         return;
       }
 
-      setMessage("Claim submitted successfully!");
+      const claimId = Number(data.claim_id);
+
+      if (!Number.isInteger(claimId) || claimId <= 0) {
+        setMessage("Claim submitted, but the claim ID could not be retrieved.");
+        return;
+      }
+
+      let uploadedCount = 0;
+
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("claim_id", String(claimId));
+        formData.append("document_type", documentType);
+        formData.append("file", file);
+
+        const uploadResponse = await fetch("/api/documents", {
+          method: "POST",
+          body: formData,
+        });
+
+        const uploadData = await uploadResponse.json();
+
+        if (!uploadResponse.ok) {
+          setMessage(
+            `Claim submitted successfully, but document upload failed: ${
+              uploadData.message || file.name
+            }`
+          );
+          return;
+        }
+
+        uploadedCount++;
+      }
+
+      setMessage(
+        files.length > 0
+          ? `Claim submitted successfully! ${uploadedCount} document(s) uploaded and awaiting verification.`
+          : "Claim submitted successfully!"
+      );
+
       setPolicyId("");
       setClaimNumber("");
       setIncidentDate("");
       setClaimDate("");
       setClaimAmount("");
       setDescription("");
+      setDocumentType("Supporting Document");
+      setFiles([]);
+
+      const fileInput = document.getElementById(
+        "claim-files"
+      ) as HTMLInputElement | null;
+
+      if (fileInput) fileInput.value = "";
     } catch {
       setMessage("Could not connect to the server.");
     } finally {
@@ -59,8 +107,9 @@ export default function NewClaimPage() {
         <h1 className="text-3xl font-bold text-slate-800">
           Submit a New Claim
         </h1>
+
         <p className="mt-2 text-slate-600">
-          Enter the insurance claim details below.
+          Enter the insurance claim details and upload supporting documents.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
@@ -146,6 +195,52 @@ export default function NewClaimPage() {
               rows={4}
               className="w-full rounded-lg border border-slate-300 p-3 text-slate-900"
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block font-medium text-slate-700">
+              Document Type
+            </label>
+            <select
+              value={documentType}
+              onChange={(e) => setDocumentType(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 p-3 text-slate-900"
+            >
+              <option>Supporting Document</option>
+              <option>Identity Proof</option>
+              <option>Policy Document</option>
+              <option>Medical Report</option>
+              <option>Repair Estimate</option>
+              <option>Invoice or Receipt</option>
+              <option>Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block font-medium text-slate-700">
+              Upload Documents
+            </label>
+            <input
+              id="claim-files"
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={(e) =>
+                setFiles(Array.from(e.target.files || []))
+              }
+              className="w-full rounded-lg border border-slate-300 p-3 text-slate-900"
+            />
+            <p className="mt-1 text-sm text-slate-500">
+              PDF, JPG or PNG. Maximum 5 MB per file.
+            </p>
+
+            {files.length > 0 && (
+              <ul className="mt-2 list-inside list-disc text-sm text-slate-600">
+                {files.map((file, index) => (
+                  <li key={`${file.name}-${index}`}>{file.name}</li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <button

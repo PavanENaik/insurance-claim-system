@@ -18,7 +18,6 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [status, setStatus] = useState<"VERIFIED" | "REJECTED">("VERIFIED");
   const [remarks, setRemarks] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -26,9 +25,11 @@ export default function DocumentsPage() {
   const loadDocuments = useCallback(async () => {
     try {
       setLoading(true);
+
       const response = await fetch("/api/documents", {
         cache: "no-store",
       });
+
       const data = await response.json();
 
       if (!response.ok || !data.success) {
@@ -36,6 +37,7 @@ export default function DocumentsPage() {
       }
 
       setDocuments(data.documents);
+      setError("");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Unable to load documents."
@@ -49,56 +51,58 @@ export default function DocumentsPage() {
     void loadDocuments();
   }, [loadDocuments]);
 
-  function openReview(
+  async function updateDocument(
     documentId: number,
-    newStatus: "VERIFIED" | "REJECTED"
+    newStatus: "VERIFIED" | "REJECTED",
+    reviewRemarks = ""
   ) {
-    setSelectedId(documentId);
-    setStatus(newStatus);
-    setRemarks("");
-    setMessage("");
-    setError("");
-  }
-
-  async function submitReview() {
-    if (selectedId === null) return;
-
-    if (status === "REJECTED" && !remarks.trim()) {
+    if (newStatus === "REJECTED" && !reviewRemarks.trim()) {
       setError("Please enter a reason for rejecting this document.");
       return;
     }
 
-    setSavingId(selectedId);
+    setSavingId(documentId);
     setMessage("");
     setError("");
 
     try {
       const response = await fetch("/api/documents", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-          document_id: selectedId,
-          verification_status: status,
-          verification_remarks: remarks.trim(),
+          document_id: documentId,
+          verification_status: newStatus,
+          verification_remarks: reviewRemarks.trim(),
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || "Verification update failed.");
+        throw new Error(data.message || "Document update failed.");
       }
 
-      setMessage(data.message);
+      setMessage(data.message || `Document ${newStatus.toLowerCase()} successfully.`);
       setSelectedId(null);
+      setRemarks("");
+
       await loadDocuments();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Verification update failed."
+        err instanceof Error ? err.message : "Document update failed."
       );
     } finally {
       setSavingId(null);
     }
+  }
+
+  function openReject(documentId: number) {
+    setSelectedId(documentId);
+    setRemarks("");
+    setMessage("");
+    setError("");
   }
 
   return (
@@ -106,8 +110,9 @@ export default function DocumentsPage() {
       <h1 className="text-3xl font-bold text-slate-900">
         Document Verification
       </h1>
+
       <p className="mt-3 text-slate-700">
-        Review submitted documents and update their verification status.
+        Open submitted documents, review them, and update their verification status.
       </p>
 
       {message && (
@@ -125,7 +130,7 @@ export default function DocumentsPage() {
       {selectedId !== null && (
         <section className="mt-6 max-w-2xl rounded-xl bg-white p-6 shadow">
           <h2 className="text-xl font-bold text-slate-900">
-            {status === "VERIFIED" ? "Verify Document" : "Reject Document"}
+            Reject Document
           </h2>
 
           <p className="mt-2 text-slate-600">
@@ -133,13 +138,13 @@ export default function DocumentsPage() {
           </p>
 
           <label className="mt-4 block font-medium text-slate-800">
-            Review remarks {status === "REJECTED" ? "(required)" : "(optional)"}
+            Reason for rejection (required)
           </label>
 
           <textarea
             value={remarks}
             onChange={(event) => setRemarks(event.target.value)}
-            placeholder="Enter verification remarks"
+            placeholder="Explain why this document is being rejected"
             maxLength={1000}
             rows={4}
             className="mt-2 w-full rounded-lg border border-slate-300 p-3 text-slate-900"
@@ -147,15 +152,21 @@ export default function DocumentsPage() {
 
           <div className="mt-4 flex gap-3">
             <button
-              onClick={submitReview}
+              onClick={() =>
+                updateDocument(selectedId, "REJECTED", remarks)
+              }
               disabled={savingId !== null}
-              className="rounded-lg bg-blue-700 px-5 py-3 text-white disabled:opacity-50"
+              className="rounded-lg bg-red-700 px-5 py-3 text-white disabled:opacity-50"
             >
-              {savingId !== null ? "Saving..." : "Confirm"}
+              {savingId === selectedId ? "Saving..." : "Confirm Rejection"}
             </button>
 
             <button
-              onClick={() => setSelectedId(null)}
+              onClick={() => {
+                setSelectedId(null);
+                setRemarks("");
+                setError("");
+              }}
               disabled={savingId !== null}
               className="rounded-lg bg-slate-200 px-5 py-3 text-slate-900"
             >
@@ -211,29 +222,42 @@ export default function DocumentsPage() {
                   <td className="border p-4">
                     {doc.verification_remarks || "—"}
                   </td>
+
                   <td className="border p-4">
-                    {doc.verification_status === "PENDING" ? (
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() =>
-                            openReview(doc.document_id, "VERIFIED")
-                          }
-                          className="rounded-lg bg-green-700 px-4 py-2 text-white"
-                        >
-                          Verify
-                        </button>
-                        <button
-                          onClick={() =>
-                            openReview(doc.document_id, "REJECTED")
-                          }
-                          className="rounded-lg bg-red-700 px-4 py-2 text-white"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-slate-600">Reviewed</span>
-                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={`/api/documents/${doc.document_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg bg-blue-700 px-4 py-2 text-white hover:bg-blue-800"
+                      >
+                        View Document
+                      </a>
+
+                      {doc.verification_status === "PENDING" && (
+                        <>
+                          <button
+                            onClick={() =>
+                              updateDocument(doc.document_id, "VERIFIED")
+                            }
+                            disabled={savingId !== null}
+                            className="rounded-lg bg-green-700 px-4 py-2 text-white disabled:opacity-50"
+                          >
+                            {savingId === doc.document_id
+                              ? "Saving..."
+                              : "Verify"}
+                          </button>
+
+                          <button
+                            onClick={() => openReject(doc.document_id)}
+                            disabled={savingId !== null}
+                            className="rounded-lg bg-red-700 px-4 py-2 text-white disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))

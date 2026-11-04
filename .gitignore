@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+private_uploads/
+.env*
+!.env.example
+node_modules/
+.next/

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Settlement = {
   settlement_id: number;
@@ -13,35 +13,46 @@ type Settlement = {
   transaction_reference: string | null;
 };
 
+type UserRole = "ADMIN" | "CLAIM_OFFICER" | "CUSTOMER";
+
 export default function SettlementsPage() {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
-  async function loadSettlements() {
+  const loadSettlements = useCallback(async () => {
     try {
+      setLoading(true);
+
       const response = await fetch("/api/settlements", {
         cache: "no-store",
       });
+
       const data = await response.json();
 
-      if (!response.ok) {
-        setMessage(data.message || "Unable to load settlements.");
-        return;
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to load settlements.");
       }
 
       setSettlements(data.settlements ?? []);
-    } catch {
-      setMessage("Unable to connect to the server.");
+      setUserRole(data.userRole ?? null);
+      setMessage("");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to connect to the server."
+      );
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void loadSettlements();
-  }, []);
+  }, [loadSettlements]);
 
   async function updateStatus(
     settlementId: number,
@@ -53,7 +64,9 @@ export default function SettlementsPage() {
     try {
       const response = await fetch("/api/settlements", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           settlement_id: settlementId,
           payment_status: status,
@@ -62,15 +75,18 @@ export default function SettlementsPage() {
 
       const data = await response.json();
 
-      if (!response.ok) {
-        setMessage(data.message || "Unable to update payment status.");
-        return;
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to update payment status.");
       }
 
-      setMessage(data.message);
+      setMessage(data.message || "Payment status updated.");
       await loadSettlements();
-    } catch {
-      setMessage("Unable to connect to the server.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to update payment status."
+      );
     } finally {
       setUpdatingId(null);
     }
@@ -79,12 +95,16 @@ export default function SettlementsPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-8 text-slate-800">
       <h1 className="text-3xl font-bold">Settlement Tracking</h1>
+
       <p className="mt-2">
-        Track settlement amounts and update payment status.
+        Track settlement amounts and payment status.
       </p>
 
       {message && (
-        <p role="status" className="mt-4 font-medium">
+        <p
+          role="status"
+          className="mt-4 rounded-lg bg-white p-3 font-medium"
+        >
           {message}
         </p>
       )}
@@ -104,7 +124,7 @@ export default function SettlementsPage() {
                   "Payment Method",
                   "Payment Status",
                   "Transaction Reference",
-                  "Actions",
+                  ...(userRole === "CUSTOMER" ? [] : ["Actions"]),
                 ].map((heading) => (
                   <th key={heading} className="border p-3">
                     {heading}
@@ -120,48 +140,72 @@ export default function SettlementsPage() {
                     <td className="border p-3">
                       {settlement.settlement_id}
                     </td>
-                    <td className="border p-3">{settlement.claim_id}</td>
+
                     <td className="border p-3">
-                      ₹{Number(settlement.approved_amount).toLocaleString("en-IN")}
+                      {settlement.claim_id}
                     </td>
+
                     <td className="border p-3">
-                      {settlement.settlement_date?.slice(0, 10) ?? "Not scheduled"}
+                      ₹
+                      {Number(settlement.approved_amount).toLocaleString(
+                        "en-IN"
+                      )}
                     </td>
+
+                    <td className="border p-3">
+                      {settlement.settlement_date?.slice(0, 10) ??
+                        "Not scheduled"}
+                    </td>
+
                     <td className="border p-3">
                       {settlement.payment_method ?? "Not specified"}
                     </td>
-                    <td className="border p-3">
+
+                    <td className="border p-3 font-semibold">
                       {settlement.payment_status}
                     </td>
+
                     <td className="border p-3">
-                      {settlement.transaction_reference ?? "Not available"}
+                      {settlement.transaction_reference ??
+                        "Not available"}
                     </td>
-                    <td className="border p-3">
-                      <div className="flex flex-wrap gap-2">
-                        {(
-                          ["PROCESSING", "PAID", "FAILED"] as const
-                        ).map((status) => (
-                          <button
-                            key={status}
-                            disabled={
-                              updatingId !== null ||
-                              settlement.payment_status === status
-                            }
-                            onClick={() =>
-                              updateStatus(settlement.settlement_id, status)
-                            }
-                            className="rounded bg-blue-700 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {status}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
+
+                    {userRole !== "CUSTOMER" && (
+                      <td className="border p-3">
+                        <div className="flex flex-wrap gap-2">
+                          {(
+                            ["PROCESSING", "PAID", "FAILED"] as const
+                          ).map((status) => (
+                            <button
+                              key={status}
+                              disabled={
+                                updatingId !== null ||
+                                settlement.payment_status === status
+                              }
+                              onClick={() =>
+                                updateStatus(
+                                  settlement.settlement_id,
+                                  status
+                                )
+                              }
+                              className="rounded bg-blue-700 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {updatingId === settlement.settlement_id
+                                ? "Saving..."
+                                : status}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="border p-4">
+                  <td
+                    colSpan={userRole === "CUSTOMER" ? 7 : 8}
+                    className="border p-4"
+                  >
                     No settlements found.
                   </td>
                 </tr>
@@ -171,7 +215,9 @@ export default function SettlementsPage() {
         </div>
       )}
 
-      <p className="mt-4">Total settlements: {settlements.length}</p>
+      <p className="mt-4">
+        Total settlements: {settlements.length}
+      </p>
     </main>
   );
 }

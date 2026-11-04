@@ -3,6 +3,7 @@ import { NextResponse, connection } from "next/server";
 import { cookies } from "next/headers";
 import pool from "@/lib/db";
 import { verifyAuthToken } from "@/lib/auth";
+import { ResultSetHeader, RowDataPacket } from "mysql2";
 
 async function getCurrentUser() {
   const cookieStore = await cookies();
@@ -60,6 +61,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      userRole: user.role,
       settlements: rows,
     });
   } catch (error) {
@@ -104,24 +106,46 @@ export async function PATCH(request: Request) {
       !["PROCESSING", "PAID", "FAILED"].includes(payment_status)
     ) {
       return NextResponse.json(
-        { success: false, message: "Invalid settlement ID or payment status." },
+        {
+          success: false,
+          message: "Invalid settlement ID or payment status.",
+        },
         { status: 400 }
       );
     }
 
-    const [result] = await pool.execute(
+    const [existing] = await pool.execute<RowDataPacket[]>(
+      `SELECT settlement_id, payment_status
+       FROM settlements
+       WHERE settlement_id = ?`,
+      [settlement_id]
+    );
+
+    if (existing.length === 0) {
+      return NextResponse.json(
+        { success: false, message: "Settlement not found." },
+        { status: 404 }
+      );
+    }
+
+    if (existing[0].payment_status === payment_status) {
+      return NextResponse.json({
+        success: true,
+        message: `Payment status is already ${payment_status}.`,
+      });
+    }
+
+    const [result] = await pool.execute<ResultSetHeader>(
       `UPDATE settlements
        SET payment_status = ?
        WHERE settlement_id = ?`,
       [payment_status, settlement_id]
     );
 
-    const affectedRows = (result as { affectedRows: number }).affectedRows;
-
-    if (affectedRows === 0) {
+    if (result.affectedRows === 0) {
       return NextResponse.json(
-        { success: false, message: "Settlement not found or status unchanged." },
-        { status: 404 }
+        { success: false, message: "Payment status was not updated." },
+        { status: 500 }
       );
     }
 
