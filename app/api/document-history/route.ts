@@ -12,7 +12,7 @@ export async function GET() {
 
     const history = await collection
       .find({})
-      .sort({ verified_at: -1, recorded_at: -1 })
+      .sort({ verified_at: -1 })
       .toArray();
 
     return NextResponse.json({
