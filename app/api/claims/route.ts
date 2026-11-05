@@ -46,6 +46,7 @@ export async function GET() {
          ORDER BY c.claim_date DESC`,
         [user.userId]
       );
+
       rows = result;
     } else {
       const [result] = await pool.execute<RowDataPacket[]>(
@@ -54,12 +55,18 @@ export async function GET() {
          FROM claims
          ORDER BY claim_date DESC`
       );
+
       rows = result;
     }
 
-    return NextResponse.json({ success: true, claims: rows });
+    return NextResponse.json({
+      success: true,
+      claims: rows,
+      userRole: user.role,
+    });
   } catch (error) {
     console.error("GET claims error:", error);
+
     return NextResponse.json(
       { success: false, message: "Unable to fetch claims." },
       { status: 500 }
@@ -129,7 +136,10 @@ export async function POST(request: Request) {
 
     if (policies.length === 0) {
       return NextResponse.json(
-        { success: false, message: "This policy does not belong to your account." },
+        {
+          success: false,
+          message: "This policy does not belong to your account.",
+        },
         { status: 403 }
       );
     }
@@ -159,6 +169,7 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error("POST claims error:", error);
+
     return NextResponse.json(
       { success: false, message: "Unable to submit the claim." },
       { status: 500 }
@@ -184,7 +195,10 @@ export async function PATCH(request: Request) {
 
     if (!["ADMIN", "CLAIM_OFFICER"].includes(user.role)) {
       return NextResponse.json(
-        { success: false, message: "You are not allowed to review claims." },
+        {
+          success: false,
+          message: "You are not allowed to review claims.",
+        },
         { status: 403 }
       );
     }
@@ -207,12 +221,16 @@ export async function PATCH(request: Request) {
     await dbConnection.beginTransaction();
 
     const [claims] = await dbConnection.execute<RowDataPacket[]>(
-      "SELECT claim_id FROM claims WHERE claim_id = ? FOR UPDATE",
+      `SELECT claim_id, claim_amount
+       FROM claims
+       WHERE claim_id = ?
+       FOR UPDATE`,
       [Number(claim_id)]
     );
 
     if (claims.length === 0) {
       await dbConnection.rollback();
+
       return NextResponse.json(
         { success: false, message: "Claim not found." },
         { status: 404 }
@@ -232,15 +250,31 @@ export async function PATCH(request: Request) {
     );
 
     await dbConnection.execute(
-      "UPDATE claims SET claim_status = ? WHERE claim_id = ?",
+      `UPDATE claims
+       SET claim_status = ?
+       WHERE claim_id = ?`,
       [claim_status, Number(claim_id)]
     );
+
+    // Automatically create a settlement when a claim is approved.
+    if (claim_status === "APPROVED") {
+      await dbConnection.execute(
+        `INSERT INTO settlements
+         (claim_id, approved_amount, payment_status)
+         VALUES (?, ?, 'PROCESSING')
+         ON DUPLICATE KEY UPDATE settlement_id = settlement_id`,
+        [Number(claim_id), claims[0].claim_amount]
+      );
+    }
 
     await dbConnection.commit();
 
     return NextResponse.json({
       success: true,
-      message: `Claim ${claim_status.toLowerCase()} successfully.`,
+      message:
+        claim_status === "APPROVED"
+          ? "Claim approved and settlement created successfully."
+          : "Claim rejected successfully.",
     });
   } catch (error) {
     if (dbConnection) {
@@ -248,6 +282,7 @@ export async function PATCH(request: Request) {
     }
 
     console.error("PATCH claims error:", error);
+
     return NextResponse.json(
       { success: false, message: "Unable to review the claim." },
       { status: 500 }
